@@ -1,56 +1,55 @@
 body {
-  font-family: Arial, sans-serif;
-  background: #f3f3f3;
+  font-family: sans-serif;
+  background: #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+}
+#game-board {
+  width: 600px;
+  height: 600px;
+  margin-top: 20px;
+  background: url('ludoking-img.webp') no-repeat center;
+  background-size: contain;
+  position: relative;
+}
+.piece {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  position: absolute;
+  border: 2px solid white;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
   display: flex;
   justify-content: center;
-  padding-top: 40px;
+  align-items: center;
+  font-size: 16px;
+  color: white;
 }
-
-.container {
-  text-align: center;
-}
-
-.board {
-  display: grid;
-  grid-template-columns: repeat(10, 40px);
-  grid-template-rows: repeat(10, 40px);
-  gap: 2px;
-  margin: 20px auto;
-  width: 402px;
-  border: 2px solid #444;
-  background: white;
-}
-
-.cell {
-  width: 40px;
-  height: 40px;
-  background-color: #eee;
+.red { background: red; }
+.green { background: green; }
+.blue { background: blue; }
+.yellow { background: yellow; }
+#controls {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 18px;
+  gap: 20px;
+  margin-top: 10px;
 }
-
-.p1 {
-  background-color: red;
-  color: white;
-}
-
-.p2 {
-  background-color: blue;
-  color: white;
-}
-
-.controls {
-  margin-top: 20px;
-}
-
-#rollBtn {
-  padding: 10px 20px;
-  font-size: 16px;
-}
-
 #dice {
-  font-size: 40px;
-  margin: 10px;
+  font-size: 28px;
+  padding: 10px 20px;
+  background: #333;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+#turn, #scoreboard {
+  font-weight: bold;
+}
+#scoreboard {
+  margin-top: 10px;
 }
