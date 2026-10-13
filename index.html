@@ -12,6 +12,7 @@ LUDO RULE / FIX LEDGER — KEEP THIS SECTION UPDATED WHEN MAKING FUTURE CHANGES
 [DONE] R9: Game progress and the pending roll/move queue are persisted in localStorage.
 [DONE] R10: Restart clears the saved game and resets all game state.
 [DONE] R11: Select a token, then choose any legal pending die; duplicate values are consumed one occurrence at a time.
+[DONE] R12: Keep currently unusable dice queued while another pending die may make them usable (e.g. 6 brings a token out, then 3 moves it).
 [KEEP] Existing roll/queue/save/turn behavior should not be rewritten while fixing unrelated bugs.
 [NOTE] Comments document rules and important logic blocks; they are not mechanically repeated on every HTML/CSS line,
 because that would obscure the actual code. Add a [DONE]/[TODO] entry here whenever a rule is changed.
@@ -90,7 +91,8 @@ function loadGame(){
   const s=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");if(!validState(s))return false;
   players=s.players.map((p,i)=>({color:COLORS[i],tokens:[...p.tokens]}));current=s.current;diceValue=s.diceValue;
   awaitingMove=s.awaitingMove;gameOver=s.gameOver;consecutiveSixes=s.consecutiveSixes;rollQueue=[...s.rollQueue];extraRollAfterCapture=s.extraRollAfterCapture;rolling=false;
-  if(awaitingMove&&(!rollQueue.length||movesForDie(color(),rollQueue[0]).length===0))awaitingMove=false;
+  // A pending die may be unusable now but become legal after another queued die moves a token.
+  if(awaitingMove&&(!rollQueue.length||!rollQueue.some(die=>movesForDie(color(),die).length>0)))awaitingMove=false;
   return true;
  }catch(e){console.warn("Could not restore saved game.",e);return false}
 }
@@ -136,19 +138,21 @@ function finishRolling(){
   if(extraRollAfterCapture){extraRollAfterCapture=false;awaitingMove=false;message.textContent=`${NAMES[color()]} captured a token. Roll again!`;saveGame();render();return}
   nextTurn();return;
  }
- // Skip only dice that no token can legally use; preserve all other pending dice.
- const skipped=[];
- rollQueue=rollQueue.filter(die=>{if(movesForDie(color(),die).length)return true;skipped.push(die);return false});
- if(skipped.length)message.textContent=`No token can move ${skipped.join(", ")}; unusable roll(s) skipped.`;
- if(!rollQueue.length){
-  selectedToken=null;awaitingMove=false;saveGame();render();
+ // Do not discard a die merely because it has no legal move on the current board.
+ // For example, when all tokens are in the yard, 3 is initially unusable in a 6 + 3
+ // sequence, but becomes usable immediately after the 6 brings a token onto the track.
+ // Keep the whole queue as long as at least one pending die can currently be played.
+ const hasAnyLegalMove=rollQueue.some(die=>movesForDie(color(),die).length>0);
+ if(!hasAnyLegalMove){
+  const skipped=[...rollQueue];
+  rollQueue=[];selectedToken=null;awaitingMove=false;saveGame();render();
+  message.textContent=`No token can use the remaining ${skipped.join(" + ")}; the unusable roll(s) are skipped.`;
   if(extraRollAfterCapture){extraRollAfterCapture=false;message.textContent=`${NAMES[color()]} captured a token. Roll again!`;saveGame();render()}
   else setTimeout(()=>nextTurn(),500);
   return;
  }
  awaitingMove=true;diceValue=rollQueue[0];selectedToken=null;
- const prefix=skipped.length?`Skipped unusable ${skipped.join(", ")}. `:"";
- message.textContent=prefix+`Rolls recorded: ${rollQueue.join(" + ")}. Click a movable token, then choose one of its legal dice.`;
+ message.textContent=`Rolls recorded: ${rollQueue.join(" + ")}. Click a movable token; any die that becomes legal after another move will remain available.`;
  saveGame();render();
 }
 function roll(){
@@ -197,9 +201,18 @@ function capture(c,p){
 }
 function selectToken(c,i){
  if(gameOver||rolling||!awaitingMove||c!==color()||!rollQueue.length)return;
- if(!availableDiceForToken(c,i).length)return;
+ const legalDice=availableDiceForToken(c,i);
+ if(!legalDice.length)return;
+ // If this token has only one distinct legal die value, there is nothing to choose.
+ // Move immediately (including yard tokens, which can only leave on a 6).
+ const choices=[...new Set(legalDice)];
+ if(choices.length===1){
+  selectedToken=null;
+  moveSelectedToken(c,i,choices[0]);
+  return;
+ }
  selectedToken={color:c,index:i};
- message.textContent=`${NAMES[c]} token ${i+1}: choose a legal die from ${rollQueue.join(" + ")}.`;
+ message.textContent=`${NAMES[c]} token ${i+1}: choose one of its legal dice.`;
  render();
 }
 function moveSelectedToken(c,i,die){
