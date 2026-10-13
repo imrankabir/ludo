@@ -143,7 +143,7 @@ button:disabled{background:#9ca3af;cursor:not-allowed}
     <button id="restartBtn" type="button">↻ Restart</button>
     <div id="message">Yellow player's turn. Roll the dice!</div>
     <div class="status">
-      <span class="badge">52 common cells</span>
+      <span class="badge">51 common-route positions</span>
       <span class="badge">6 home cells / player</span>
       <span class="badge">4 tokens / player</span>
       <span class="badge">All 4 required to win</span>
@@ -154,7 +154,7 @@ button:disabled{background:#9ca3af;cursor:not-allowed}
 <div class="rules">
   <b>Classic rules implemented:</b>
   Roll 6 to bring a token out of the yard. A token completes the 52-cell common
-  circuit and then automatically enters its own colored home lane. An exact roll
+  route and then automatically enters its own colored home lane. An exact roll
   is required to reach the final home cell. Safe/start cells protect tokens.
   Rolling 6 or capturing gives an extra turn. A player wins only after all four
   of that player's tokens reach the final home.
@@ -204,7 +204,7 @@ const SAFE = new Set([0,8,13,21,26,34,39,47]);
 
 /*
  * Six home/final-lane cells, ordered from the outside toward center.
- * Progress 52 = first home cell; 57 = final home cell.
+ * Progress 51 = first home cell; 56 = final home cell.
  */
 const HOME_LANES = {
   yellow:[[7,1],[7,2],[7,3],[7,4],[7,5],[7,6]],
@@ -216,16 +216,16 @@ const HOME_LANES = {
 /*
  * Progress:
  * -1 = yard
- * 0..51 = 52-cell common track
+ * 0..50 = 51 common-route positions (start counts as position 1)
  * 52..57 = six home-lane cells
  * 57 = completely finished
  */
 const YARD = -1;
-const FIRST_HOME = 52;
-const FINISH = 57;
+const FIRST_HOME = 51;
+const FINISH = 56;
 
 /*
- * This is the classic 52-cell ring. The 4 turns use the
+ * This is the classic 52-cell physical board ring; each player uses 51 common-route positions before entering home. The 4 turns use the
  * traditional diagonal corner transitions around the center.
  */
 const TRACK = [
@@ -250,7 +250,7 @@ if(
   TRACK.length !== 52 ||
   new Set(TRACK.map(p => p.join(","))).size !== 52
 ){
-  throw new Error("Invalid 52-cell Ludo track.");
+  throw new Error("Invalid physical Ludo track coordinates.");
 }
 
 /* ============================================================
@@ -265,6 +265,7 @@ let currentPlayer = 0;
 let diceValue = 0;
 let canMove = false;
 let rolling = false;
+let consecutiveSixes = 0;
 let gameOver = false;
 
 /* ============================================================
@@ -308,7 +309,7 @@ function canTokenMove(color, tokenIndex){
   if(p === FINISH) return false;
 
   /* Yard token requires a six. */
-  if(p === YARD) return diceValue === 6;
+  if(p === YARD) return diceValue === 6 || consecutiveSixes > 0;
 
   /* No overshooting the final home cell. */
   return p + diceValue <= FINISH;
@@ -329,17 +330,18 @@ function playerHasWon(player){
    ============================================================ */
 function saveGame(){
   set("gameState",{
-    version:4,
+    version:6,
     players,
     currentPlayer,
     diceValue,
     canMove,
+    consecutiveSixes,
     gameOver
   });
 }
 
 function validSavedState(saved){
-  if(!saved || saved.version !== 4) return false;
+  if(!saved || saved.version !== 6) return false;
   if(!Array.isArray(saved.players) || saved.players.length !== 4) return false;
   if(!Number.isInteger(saved.currentPlayer) || saved.currentPlayer < 0 || saved.currentPlayer > 3) return false;
   if(!Number.isInteger(saved.diceValue) || saved.diceValue < 0 || saved.diceValue > 6) return false;
@@ -366,6 +368,7 @@ function loadGame(){
   currentPlayer = saved.currentPlayer;
   diceValue = saved.diceValue;
   canMove = Boolean(saved.canMove);
+  consecutiveSixes = Number.isInteger(saved.consecutiveSixes) ? Math.max(0, Math.min(2, saved.consecutiveSixes)) : 0;
   gameOver = Boolean(saved.gameOver);
 
   /*
@@ -526,52 +529,61 @@ function rollDice(){
   rollBtn.disabled = true;
 
   let count = 0;
-
   const timer = setInterval(()=>{
     dice.textContent = DICE_FACES[Math.floor(Math.random()*6)];
     count++;
 
     if(count >= 10){
       clearInterval(timer);
-
       diceValue = Math.floor(Math.random()*6) + 1;
       dice.textContent = DICE_FACES[diceValue-1];
       rolling = false;
 
       const color = currentColor();
+
+      /*
+       * Requested roll-chain rule:
+       * A six is not used to move a token. The same player rolls again.
+       * Three consecutive sixes cancel the chain and forfeit the turn.
+       * The first non-six ends the chain and becomes the move value.
+       */
+      if(diceValue === 6){
+        consecutiveSixes++;
+        canMove = false;
+
+        if(consecutiveSixes >= 3){
+          consecutiveSixes = 0;
+          diceValue = 0;
+          dice.textContent = "⚀";
+          message.textContent = `${NAMES[color]} rolled three consecutive sixes. All three sixes are cancelled; turn passes to the next player.`;
+          saveGame();
+          render();
+          setTimeout(nextTurn, 900);
+          return;
+        }
+
+        message.textContent = `${NAMES[color]} rolled 6 (${consecutiveSixes}/3). Six cancelled — roll again before moving a token.`;
+        saveGame();
+        render();
+        rollBtn.disabled = false;
+        return;
+      }
+
+      // A non-six ends the consecutive-six chain and is the move to play.
+      consecutiveSixes = 0;
       const moves = movableTokens(color);
 
       if(moves.length === 0){
         canMove = false;
-
-        /*
-         * A six still grants another roll in classic play,
-         * even when no token can move.
-         */
-        if(diceValue === 6){
-          message.textContent =
-            `${NAMES[color]} rolled 6 but has no valid move. Roll again!`;
-          saveGame();
-          render();
-          rollBtn.disabled = false;
-          return;
-        }
-
-        message.textContent =
-          `${NAMES[color]} rolled ${diceValue}. No valid move.`;
-
+        message.textContent = `${NAMES[color]} rolled ${diceValue}. No valid token can move; turn passes.`;
         saveGame();
         render();
-
         setTimeout(nextTurn,700);
         return;
       }
 
       canMove = true;
-
-      message.textContent =
-        `${NAMES[color]} rolled ${diceValue}. Select a highlighted token.`;
-
+      message.textContent = `${NAMES[color]} rolled ${diceValue}. Select a highlighted token.`;
       saveGame();
       render();
     }
@@ -598,10 +610,10 @@ function selectToken(color,index){
    ============================================================ */
 function captureOpponents(movingColor,newProgress){
   /*
-   * Only common-track cells can capture.
+   * Only common-route positions can capture.
    * Home lane and finished tokens can never capture.
    */
-  if(newProgress < 0 || newProgress > 51) return 0;
+  if(newProgress < 0 || newProgress > 50) return 0;
 
   const landing = globalTrackIndex(movingColor,newProgress);
 
@@ -615,7 +627,7 @@ function captureOpponents(movingColor,newProgress){
     const opponent = players[playerIndex(opponentColor)];
 
     opponent.tokens.forEach((progress,index)=>{
-      if(progress < 0 || progress > 51) return;
+      if(progress < 0 || progress > 50) return;
 
       const opponentCell = globalTrackIndex(opponentColor,progress);
 
@@ -653,6 +665,7 @@ function moveToken(color,index){
 
   p.tokens[index] = newProgress;
   canMove = false;
+  consecutiveSixes = 0;
 
   const captured = captureOpponents(color,newProgress);
 
@@ -717,6 +730,7 @@ function nextTurn(){
 
   canMove = false;
   diceValue = 0;
+  consecutiveSixes = 0;
   currentPlayer = (currentPlayer + 1) % COLORS.length;
 
   dice.textContent = "⚀";
