@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<!--
+LUDO RULE / FIX LEDGER — KEEP THIS SECTION UPDATED WHEN MAKING FUTURE CHANGES
+[DONE] R1: Rolling a 6 records that value and allows another roll before movement.
+[DONE] R2: Three consecutive sixes cancel the pending roll sequence and pass the turn.
+[DONE] R3: After the first non-six, the player assigns each recorded die to a token one at a time.
+[DONE] R4: The same token or different legal tokens may be selected for different recorded dice.
+[DONE] R5: A token may leave the yard only on a 6; finished tokens cannot move; moves cannot exceed FINISH.
+[DONE] R6: Capturing an opponent grants a fresh extra roll sequence.
+[DONE] R7: A landing cell with two or more opponent tokens is a stack and cannot be captured.
+[DONE] R8: The current player's queued dice values and count are shown on screen.
+[DONE] R9: Game progress and the pending roll/move queue are persisted in localStorage.
+[DONE] R10: Restart clears the saved game and resets all game state.
+[KEEP] Existing roll/queue/save/turn behavior should not be rewritten while fixing unrelated bugs.
+[NOTE] Comments document rules and important logic blocks; they are not mechanically repeated on every HTML/CSS line,
+because that would obscure the actual code. Add a [DONE]/[TODO] entry here whenever a rule is changed.
+-->
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Classic Ludo — Fixed Turns</title>
+<style>
+:root{--red:#ef4444;--green:#22c55e;--yellow:#facc15;--blue:#3b82f6}
+*{box-sizing:border-box}body{margin:0;padding:16px 8px 28px;font-family:Arial,sans-serif;background:linear-gradient(135deg,#172554,#312e81);color:#111827}
+h1{text-align:center;color:#facc15;margin:4px 0}.subtitle{text-align:center;color:#c7d2fe;margin-bottom:14px}
+.wrap{width:min(96vw,700px);margin:auto}.game,.controls{background:#fff;padding:10px;border-radius:15px;box-shadow:0 12px 35px #0005}
+.board{display:grid;grid-template-columns:repeat(15,1fr);grid-template-rows:repeat(15,1fr);aspect-ratio:1;border:3px solid #202020;position:relative;overflow:hidden}
+.home{display:flex;align-items:center;justify-content:center;border:1px solid #202020}.yellow-home{grid-area:1/1/7/7;background:var(--yellow)}.blue-home{grid-area:1/10/7/16;background:var(--blue)}.green-home{grid-area:10/1/16/7;background:var(--green)}.red-home{grid-area:10/10/16/16;background:var(--red)}
+.home-inner{width:76%;height:76%;padding:12%;border-radius:12%;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:12%;background:#ffffff66}
+.yard{display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid #ffffff88;background:#ffffff55;min-width:0;min-height:0}
+.cell{display:flex;align-items:center;justify-content:center;border:1px solid #202020;background:#fff;min-width:0;min-height:0;position:relative}
+.safe{background:#e5e7eb}.safe:after{content:"★";font-size:clamp(8px,1.7vw,16px);color:#6b7280}
+.start-yellow{background:var(--yellow)}.start-blue{background:var(--blue)}.start-red{background:var(--red)}.start-green{background:var(--green)}
+.lane-yellow{background:#fde68a}.lane-blue{background:#bfdbfe}.lane-red{background:#fecaca}.lane-green{background:#bbf7d0}
+.center{grid-area:7/7/10/10;border:2px solid #202020;background:conic-gradient(var(--blue) 0 25%,var(--red) 25% 50%,var(--green) 50% 75%,var(--yellow) 75%)}
+.token{width:76%;height:76%;max-width:30px;max-height:30px;min-width:9px;min-height:9px;border-radius:50%;border:2px solid white;box-shadow:0 2px 4px #0008;color:white;font-weight:bold;font-size:clamp(8px,1.5vw,12px);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+.token.yellow{background:#ca8a04}.token.blue{background:#2563eb}.token.red{background:#dc2626}.token.green{background:#16a34a}.token.selectable{outline:3px solid #111;animation:pulse .5s infinite alternate}
+@keyframes pulse{to{transform:scale(1.15)}}.players{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0}.player{text-align:center;padding:8px 2px;border:3px solid transparent;border-radius:8px;font-weight:bold;font-size:13px}.player.active{border-color:#111}.player.yellow{background:#fef3c7}.player.blue{background:#dbeafe}.player.red{background:#fee2e2}.player.green{background:#dcfce7}
+.dice{font-size:44px;text-align:center;margin:8px}.controls{text-align:center;margin-top:12px;padding:14px}button{padding:11px 18px;margin:3px;border:0;border-radius:8px;background:#4f46e5;color:#fff;font-weight:bold;cursor:pointer}button:disabled{background:#9ca3af;cursor:not-allowed}#moveQueue{margin:4px 0 8px;font-weight:bold;color:#3730a3;min-height:20px}#message{min-height:24px;font-weight:bold;margin-top:8px}.rules{color:#e0e7ff;font-size:13px;line-height:1.5;width:min(96vw,700px);margin:12px auto}
+@media(max-width:520px){.players{grid-template-columns:repeat(2,1fr)}.controls{padding:10px}}
+</style>
+</head>
+<body>
+<h1>🎲 CLASSIC LUDO</h1><div class="subtitle">Four players · fixed extra-roll and three-six rules</div>
+<div class="wrap"><div class="game"><div class="board" id="board">
+<div class="home yellow-home"><div class="home-inner" id="yellow-yard"></div></div><div class="home blue-home"><div class="home-inner" id="blue-yard"></div></div><div class="home green-home"><div class="home-inner" id="green-yard"></div></div><div class="home red-home"><div class="home-inner" id="red-yard"></div></div><div class="center"></div>
+</div></div>
+<div class="controls"><div class="players" id="players"></div><div class="dice" id="dice">⚀</div><div id="moveQueue" aria-live="polite">Moves available: 0</div><button id="rollBtn">🎲 Roll Dice</button><button id="restartBtn">↻ Restart</button><div id="message">Yellow player's turn. Roll the dice!</div></div></div>
+<div class="rules"><b>Rules:</b> A six grants another roll before movement. Three consecutive sixes cancel the sequence and pass the turn. After rolling ends, the player assigns each recorded die to a token one at a time; the same token or different tokens may be selected for different dice. Capturing a lone opponent token grants an extra roll. A stack of two or more opponent tokens on one cell cannot be captured. The current player's available move count and pending dice are shown above. Progress is saved in this browser's local storage.</div>
+<script>
+"use strict";
+const COLORS=["yellow","blue","red","green"],NAMES={yellow:"Yellow",blue:"Blue",red:"Red",green:"Green"};
+const STARTS={yellow:0,blue:13,red:26,green:39},SAFE=new Set([0,8,13,21,26,34,39,47]);
+const TRACK=[[6,1],[6,2],[6,3],[6,4],[6,5],[5,6],[4,6],[3,6],[2,6],[1,6],[0,6],[0,7],[0,8],[1,8],[2,8],[3,8],[4,8],[5,8],[6,9],[6,10],[6,11],[6,12],[6,13],[6,14],[7,14],[8,14],[8,13],[8,12],[8,11],[8,10],[8,9],[9,8],[10,8],[11,8],[12,8],[13,8],[14,8],[14,7],[14,6],[13,6],[12,6],[11,6],[10,6],[9,6],[8,5],[8,4],[8,3],[8,2],[8,1],[8,0],[7,0],[6,0]];
+const LANES={yellow:[[7,1],[7,2],[7,3],[7,4],[7,5],[7,6]],blue:[[1,7],[2,7],[3,7],[4,7],[5,7],[6,7]],red:[[7,13],[7,12],[7,11],[7,10],[7,9],[7,8]],green:[[13,7],[12,7],[11,7],[10,7],[9,7],[8,7]]};
+const YARD=-1,HOME_START=51,FINISH=56,DICE=["⚀","⚁","⚂","⚃","⚄","⚅"];
+const STORAGE_KEY="ludo-gameState",STORAGE_VERSION=6;
+let players=COLORS.map(color=>({color,tokens:[YARD,YARD,YARD,YARD]}));
+let current=0,diceValue=0,awaitingMove=false,rolling=false,gameOver=false,consecutiveSixes=0;
+// DONE R3/R4/R8: rollQueue is the source-of-truth array of die values still awaiting token assignment.
+// Its length is the current player's available move count; the first value is the move being assigned now.
+let rollQueue=[],turnId=0,extraRollAfterCapture=false;
+const $=id=>document.getElementById(id),board=$("board"),rollBtn=$("rollBtn"),message=$("message");
+function idx(c){return COLORS.indexOf(c)}function color(){return COLORS[current]}
+function trackIndex(c,p){return (STARTS[c]+p)%52}
+function tokenCanMove(c,i,die){
+ const p=players[idx(c)].tokens[i];
+ if(p===FINISH)return false;
+ if(p===YARD)return die===6;
+ return p+die<=FINISH;
+}
+function movesForDie(c,die){return players[idx(c)].tokens.map((_,i)=>i).filter(i=>tokenCanMove(c,i,die))}
+function target(c,p){if(p<0)return null;if(p>=HOME_START)return $(`${c}-lane-${p-HOME_START}`);return $(`track-${trackIndex(c,p)}`)}
+function saveGame(){
+ try{localStorage.setItem(STORAGE_KEY,JSON.stringify({version:STORAGE_VERSION,players,current,diceValue,awaitingMove,gameOver,consecutiveSixes,rollQueue,extraRollAfterCapture}));return true}
+ catch(e){console.warn("Could not save Ludo progress.",e);return false}
+}
+function validState(s){
+ return s&&s.version===STORAGE_VERSION&&Array.isArray(s.players)&&s.players.length===4&&Number.isInteger(s.current)&&s.current>=0&&s.current<4&&
+ Number.isInteger(s.diceValue)&&s.diceValue>=0&&s.diceValue<=6&&Number.isInteger(s.consecutiveSixes)&&s.consecutiveSixes>=0&&s.consecutiveSixes<=2&&
+ typeof s.awaitingMove==="boolean"&&typeof s.gameOver==="boolean"&&Array.isArray(s.rollQueue)&&s.rollQueue.length<=3&&s.rollQueue.every(n=>Number.isInteger(n)&&n>=1&&n<=6)&&
+ typeof s.extraRollAfterCapture==="boolean"&&s.players.every((p,i)=>p&&p.color===COLORS[i]&&Array.isArray(p.tokens)&&p.tokens.length===4&&p.tokens.every(v=>Number.isInteger(v)&&v>=YARD&&v<=FINISH));
+}
+function loadGame(){
+ try{
+  const s=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");if(!validState(s))return false;
+  players=s.players.map((p,i)=>({color:COLORS[i],tokens:[...p.tokens]}));current=s.current;diceValue=s.diceValue;
+  awaitingMove=s.awaitingMove;gameOver=s.gameOver;consecutiveSixes=s.consecutiveSixes;rollQueue=[...s.rollQueue];extraRollAfterCapture=s.extraRollAfterCapture;rolling=false;
+  if(awaitingMove&&(!rollQueue.length||movesForDie(color(),rollQueue[0]).length===0))awaitingMove=false;
+  return true;
+ }catch(e){console.warn("Could not restore saved game.",e);return false}
+}
+function createBoard(){
+ TRACK.forEach((pos,i)=>{const e=document.createElement("div");e.className="cell";e.id=`track-${i}`;e.style.gridRow=pos[0]+1;e.style.gridColumn=pos[1]+1;if(SAFE.has(i))e.classList.add("safe");for(const c of COLORS)if(STARTS[c]===i)e.classList.add(`start-${c}`);board.appendChild(e)});
+ COLORS.forEach(c=>{LANES[c].forEach((pos,i)=>{const e=document.createElement("div");e.className=`cell lane-${c}`;e.id=`${c}-lane-${i}`;e.style.gridRow=pos[0]+1;e.style.gridColumn=pos[1]+1;board.appendChild(e)});for(let i=0;i<4;i++){const e=document.createElement("div");e.className="yard";e.id=`${c}-yard-${i}`;$(`${c}-yard`).appendChild(e)}});
+}
+function render(){
+ // DONE R8: keep the move counter/list synchronized with the actual pending-dice array.
+ const queueLabel = $("moveQueue");
+ if (queueLabel) {
+  queueLabel.textContent = rollQueue.length
+   ? `Moves available: ${rollQueue.length} · Pending dice: ${rollQueue.join(" + ")}`
+   : (consecutiveSixes > 0
+      ? `Moves available: 0 · ${consecutiveSixes} consecutive six(es); roll again`
+      : "Moves available: 0");
+ }
+ document.querySelectorAll(".token").forEach(e=>e.remove());
+ COLORS.forEach(c=>players[idx(c)].tokens.forEach((p,i)=>{const dest=p===YARD?$(`${c}-yard-${i}`):target(c,p);if(!dest)return;const t=document.createElement("div");t.className=`token ${c}`;t.textContent=i+1;
+  if(awaitingMove&&c===color()&&rollQueue.length&&tokenCanMove(c,i,rollQueue[0]))t.classList.add("selectable");
+  t.title=`${NAMES[c]} token ${i+1}`;t.onclick=ev=>{ev.stopPropagation();selectToken(c,i)};dest.appendChild(t)}));
+ document.querySelectorAll(".player").forEach((e,i)=>e.classList.toggle("active",i===current));
+ rollBtn.disabled=rolling||gameOver||awaitingMove;
+}
+function setStatus(text){message.textContent=text;saveGame()}
+function nextTurn(text){
+ if(gameOver)return;current=(current+1)%4;diceValue=0;awaitingMove=false;consecutiveSixes=0;rollQueue=[];extraRollAfterCapture=false;
+ $("dice").textContent="⚀";message.textContent=text||`${NAMES[color()]} player's turn. Roll the dice!`;saveGame();render();
+}
+function finishRolling(){
+ if(!rollQueue.length){nextTurn();return}
+ // Ask the player to assign each recorded die to a token, one die at a time.
+ awaitingMove=true;diceValue=rollQueue[0];
+ const valid=movesForDie(color(),diceValue);
+ if(!valid.length){
+  const skipped=rollQueue.shift();
+  message.textContent=`No token can move ${skipped}. That roll is skipped.`;
+  saveGame();render();
+  if(rollQueue.length){setTimeout(finishRolling,350)}else if(extraRollAfterCapture){extraRollAfterCapture=false;awaitingMove=false;rollQueue=[];message.textContent=`${NAMES[color()]} captured a token. Roll again!`;saveGame();render()}else setTimeout(()=>nextTurn(),500);
+  return;
+ }
+ message.textContent=`Rolls recorded: ${rollQueue.join(" + ")}. Move a token ${diceValue} space(s). You may choose a different token for the next roll.`;
+ saveGame();render();
+}
+function roll(){
+ if(rolling||gameOver||awaitingMove)return;
+ rolling=true;rollBtn.disabled=true;const id=++turnId;let n=0;
+ const timer=setInterval(()=>{
+  $("dice").textContent=DICE[Math.floor(Math.random()*6)];
+  if(++n<8)return;clearInterval(timer);if(id!==turnId)return;
+  diceValue=Math.floor(Math.random()*6)+1;$("dice").textContent=DICE[diceValue-1];rolling=false;
+  if(diceValue===6){
+   consecutiveSixes++;
+   // DONE R2: the third consecutive six cancels the entire queued sequence and passes the turn.
+    if(consecutiveSixes>=3){
+    rollQueue=[];awaitingMove=false;diceValue=0;consecutiveSixes=0;extraRollAfterCapture=false;
+    $("dice").textContent="⚀";message.textContent=`${NAMES[color()]} rolled three consecutive sixes. The sequence is canceled; turn passes.`;
+    saveGame();render();const endedTurn=turnId;setTimeout(()=>{if(endedTurn===turnId&&!gameOver)nextTurn()},650);return;
+   }
+   rollQueue.push(6);
+   message.textContent=`${NAMES[color()]} rolled 6 (${consecutiveSixes}/3). Roll again before moving.`;
+   saveGame();render();return;
+  }
+  consecutiveSixes=0;rollQueue.push(diceValue);
+  finishRolling();
+ },55);
+}
+// DONE R7: only a lone opponent token on the landing cell can be captured.
+// If two or more opponent tokens occupy that cell, they form a protected stack.
+// The mover has already been placed before this function runs, so count only opponents.
+function capture(c,p){
+ if(p<0||p>50)return 0;                          // Tokens in the home lane cannot capture.
+ const landing=trackIndex(c,p);                   // Convert progress to the shared track cell.
+ if(SAFE.has(landing))return 0;                   // Existing safe squares remain protected.
+ const opponentsAtLanding=[];                     // Gather opponents on this exact cell.
+ COLORS.forEach(o=>{
+  if(o===c)return;                                // Never capture the moving player's own tokens.
+  players[idx(o)].tokens.forEach((q,i)=>{
+   if(q>=0&&q<=50&&trackIndex(o,q)===landing){
+    opponentsAtLanding.push({color:o,index:i});   // Record each matching opponent token.
+   }
+  });
+ });
+ if(opponentsAtLanding.length!==1)return 0;        // DONE R7: 2+ opponents cannot be captured.
+ const victim=opponentsAtLanding[0];               // Capture only the sole opponent token.
+ players[idx(victim.color)].tokens[victim.index]=YARD;
+ return 1;
+}
+function selectToken(c,i){
+ if(gameOver||rolling||!awaitingMove||c!==color()||!rollQueue.length)return;
+ const die=rollQueue[0];if(!tokenCanMove(c,i,die))return;
+ const p=players[idx(c)],old=p.tokens[i],next=old===YARD?0:old+die;
+ if(next>FINISH)return;
+ p.tokens[i]=next;rollQueue.shift();awaitingMove=false;
+ const captured=next<=50?capture(c,next):0;
+ if(p.tokens.every(v=>v===FINISH)){gameOver=true;rollQueue=[];message.textContent=`🏆 ${NAMES[c]} wins! All four tokens reached home.`;saveGame();render();return}
+ let detail=next===FINISH?`${NAMES[c]} token ${i+1} reached home!`:captured?`${NAMES[c]} captured ${captured} token(s)!`:old===YARD?`${NAMES[c]} brought token ${i+1} out of the yard.`:`${NAMES[c]} moved token ${i+1} by ${die}.`;
+ if(captured>0){
+  // Capture grants an extra roll immediately; remaining queued rolls are cleared
+  // so the player can resolve the capture bonus as a fresh roll sequence.
+  rollQueue=[];consecutiveSixes=0;extraRollAfterCapture=false;awaitingMove=false;
+  message.textContent=detail+" Capture bonus: roll again.";saveGame();render();return;
+ }
+ if(rollQueue.length){message.textContent=detail+` Choose a token for the next roll (${rollQueue[0]}).`;saveGame();finishRolling();return}
+ if(extraRollAfterCapture){extraRollAfterCapture=false;awaitingMove=false;message.textContent=detail+" Roll again!";saveGame();render();return}
+ nextTurn(detail+` ${NAMES[COLORS[(current+1)%4]]}'s turn.`);
+}
+function setup(){COLORS.forEach(c=>{const e=document.createElement("div");e.className=`player ${c}`;e.textContent=NAMES[c];$("players").appendChild(e)})}
+function restart(){
+ if(!confirm("Restart the game? Saved progress will be cleared."))return;turnId++;try{localStorage.removeItem(STORAGE_KEY)}catch(e){}
+ players=COLORS.map(color=>({color,tokens:[YARD,YARD,YARD,YARD]}));current=0;diceValue=0;awaitingMove=false;rolling=false;gameOver=false;consecutiveSixes=0;rollQueue=[];extraRollAfterCapture=false;
+ $("dice").textContent="⚀";message.textContent="Yellow player's turn. Roll the dice!";saveGame();render();
+}
+$("rollBtn").onclick=roll;$("restartBtn").onclick=restart;setup();createBoard();const restored=loadGame();render();
+if(restored){
+ $("dice").textContent=diceValue?DICE[diceValue-1]:"⚀";
+ if(gameOver)message.textContent="🏆 Game completed! All four winning tokens are home.";
+ else if(awaitingMove)message.textContent=`${NAMES[color()]}: choose a token for ${rollQueue[0]} move(s).`;
+ else if(consecutiveSixes>0)message.textContent=`${NAMES[color()]} rolled ${consecutiveSixes} consecutive six(es). Roll again before moving.`;
+ else message.textContent=`${NAMES[color()]} player's turn. Roll the dice!`;
+}else saveGame();
+</script>
+</body></html>
